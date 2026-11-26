@@ -1,14 +1,16 @@
 {
   "manifest_version": 3,
   "name": "Relay Highlighter",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Shows a red border on the page with the latest AI reply so you know where to copy from.",
+  "permissions": ["storage"],
   "content_scripts": [
     {
       "matches": [
         "https://muse.ai/*",
         "https://*.muse.ai/*",
-        "https://chatgpt.com/*"
+        "https://chatgpt.com/*",
+        "https://claude.ai/*"
       ],
       "js": ["src/content.js"],
       "run_at": "document_idle"

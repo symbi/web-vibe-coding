@@ -4,6 +4,10 @@
 // page as latest automatically. Alt+Shift+R remains as a manual override.
 // Only { id, site, ts } is stored; detection only counts how much text
 // changed (lengths), never the text itself, which is not read or saved.
+// Step 3a-fix: typing in an input area suppresses detection briefly (the
+// border follows AI replies, not the user), debug logs carry structural
+// target signatures (never text), and a stale border removes itself
+// after the extension is reloaded.
 (() => {
   // Prevent duplicate injection: bail out if this script already ran on this page.
   const FLAG = "relayHighlighterInjected";
@@ -22,6 +26,7 @@
   const MIN_MUTATIONS = 30; // A burst needs at least this many counted records.
   const MIN_ADDED_CHARS = 80; // A burst needs at least this much added text (estimated).
   const NAV_GRACE_MS = 3000; // Ignore changes this long after load / URL change.
+  const USER_ACTIVITY_GRACE_MS = 1500; // After the user types in an editable area, ignore page changes this long.
 
   // After the extension is reloaded, old content scripts lose their context
   // (chrome.runtime.id becomes empty). Check this and stop quietly instead
@@ -168,6 +173,8 @@
     let mutations = 0;
     let addedChars = 0;
     let quietTimer = null;
+    let lastUserActivityAt = -Infinity; // Last input event inside an editable area.
+    const targetCounts = new Map(); // Structural signature -> count, for debug logs.
     let graceUntil = performance.now() + NAV_GRACE_MS;
     let lastHref = location.href;
     let stopped = false;
@@ -177,13 +184,15 @@
       lastMutationAt = null;
       mutations = 0;
       addedChars = 0;
+      targetCounts.clear();
       if (quietTimer !== null) {
         clearTimeout(quietTimer);
         quietTimer = null;
       }
     };
 
-    // Extension reloaded: disconnect and clear timers, quietly.
+    // Extension reloaded: disconnect, clear timers, and remove the stale
+    // border from the page (the old script can no longer control it).
     const stopDetector = () => {
       if (stopped) return;
       stopped = true;
@@ -194,6 +203,12 @@
       }
       resetBurst();
       clearInterval(hrefTimer);
+      try {
+        border.style.display = "none";
+        host.remove();
+      } catch {
+        // Host already removed; nothing to do.
+      }
     };
 
     // True when the record's target sits in an editable area (the user
@@ -201,8 +216,39 @@
     const isInEditable = (node) => {
       const el = node && node.nodeType === 3 ? node.parentElement : node;
       if (!el || typeof el.closest !== "function") return false;
-      return Boolean(el.closest("textarea, input, [contenteditable]"));
+      return Boolean(
+        el.closest('textarea, input, [contenteditable]:not([contenteditable="false"])')
+      );
     };
+
+    // Structural signature of a record's target element: tag name, role,
+    // data-testid, and up to 3 ancestor tag names, each part truncated to
+    // 40 chars. Never includes text, class, id, or other content-bearing
+    // attributes, so it is safe to put in debug logs for tuning.
+    const signatureOf = (node) => {
+      const el = node && node.nodeType === 3 ? node.parentElement : node;
+      if (!el || !el.tagName) return null;
+      const trunc = (value) => String(value).slice(0, 40);
+      let head = trunc(el.tagName.toLowerCase());
+      try {
+        const role = el.getAttribute ? el.getAttribute("role") : null;
+        if (role) head += `[role=${trunc(role)}]`;
+        const testId = el.getAttribute ? el.getAttribute("data-testid") : null;
+        if (testId) head += `[testid=${trunc(testId)}]`;
+      } catch {
+        // Attribute access failed; fall back to the tag name alone.
+      }
+      const parts = [head];
+      let ancestor = el.parentElement;
+      for (let depth = 0; ancestor && depth < 3; depth += 1) {
+        if (ancestor.tagName) parts.push(trunc(ancestor.tagName.toLowerCase()));
+        ancestor = ancestor.parentElement;
+      }
+      return parts.join("<");
+    };
+
+    const topTargets = () =>
+      [...targetCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
 
     const onBurstEnd = () => {
       quietTimer = null;
@@ -214,8 +260,15 @@
         burstStart === null || lastMutationAt === null ? 0 : lastMutationAt - burstStart;
       const accepted =
         durationMs >= MIN_BURST_MS && mutations >= MIN_MUTATIONS && addedChars >= MIN_ADDED_CHARS;
-      // Debug line contains numbers and the verdict only, never page text.
-      console.debug("[Relay] burst ended", { durationMs, mutations, addedChars, accepted });
+      // Debug line contains numbers, the verdict, and structural target
+      // signatures only, never page text.
+      console.debug("[Relay] burst ended", {
+        durationMs,
+        mutations,
+        addedChars,
+        accepted,
+        topTargets: topTargets(),
+      });
       resetBurst();
       if (accepted) {
         writeLatest(); // Always a write (refreshes ts), never a toggle.
@@ -228,6 +281,15 @@
         stopDetector();
         return;
       }
+      // The user is typing: changes anywhere on the page (previews,
+      // counters, suggestion panels around the input box) are not a reply.
+      if (performance.now() - lastUserActivityAt < USER_ACTIVITY_GRACE_MS) {
+        if (burstStart !== null) {
+          console.debug("[Relay] burst discarded (user typing)", { mutations, addedChars });
+          resetBurst();
+        }
+        return;
+      }
       if (performance.now() < graceUntil) return; // Load / navigation grace period.
 
       let counted = 0;
@@ -235,6 +297,14 @@
         if (isInEditable(record.target)) continue;
         counted += 1;
         mutations += 1;
+        const signature = signatureOf(record.target);
+        if (signature !== null) {
+          if (targetCounts.has(signature)) {
+            targetCounts.set(signature, targetCounts.get(signature) + 1);
+          } else if (targetCounts.size < 50) {
+            targetCounts.set(signature, 1);
+          }
+        }
         if (record.type === "childList") {
           for (const node of record.addedNodes || []) {
             // Only the length is used; the text itself is never stored.
@@ -252,6 +322,27 @@
       if (quietTimer !== null) clearTimeout(quietTimer);
       quietTimer = setTimeout(onBurstEnd, QUIET_MS);
     };
+
+    // Track genuine user input inside editable areas. Only input-style
+    // events count: keydown is deliberately NOT used, because pressing
+    // Enter to send a message must not suppress the reply that follows.
+    // Listeners are passive and never prevent or modify the events.
+    const onUserActivity = (event) => {
+      if (isInEditable(event.target)) {
+        lastUserActivityAt = performance.now();
+      }
+    };
+    for (const type of [
+      "beforeinput",
+      "input",
+      "compositionstart",
+      "compositionupdate",
+      "compositionend",
+      "paste",
+      "cut",
+    ]) {
+      document.addEventListener(type, onUserActivity, { capture: true, passive: true });
+    }
 
     const observer = new MutationObserver(onMutations);
 

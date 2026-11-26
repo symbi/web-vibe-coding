@@ -1,7 +1,7 @@
 # 第 2 步：跨页面同步
 
 > 给 Muse 的任务指令。分支名：`muse/step-2`。
-> **前提：PR #1（第 1 步）已被合并到 `main`。** 必须从最新的 `main` 创建分支；如果 `main` 里还没有 `manifest.json` 和 `src/content.js`，请停下并告诉用户。
+> **前提：PR #1（第 1 步）已合并到 `main`（2026-11-26）。** 必须从最新的 `main` 创建分支；如果 `main` 里没有 `manifest.json` 和 `src/content.js`，请停下并告诉用户。
 > 开始前先读 `README.md`、`docs/PLAN.md`（重点是"状态模型"和"协作协议"）、`docs/reviews/step-1.md`。
 
 ## 目标
@@ -61,14 +61,14 @@
 - [ ] A 亮红框时刷新 A：红框仍然在
 - [ ] 光标在聊天输入框里时，快捷键仍然有效
 - [ ] 按住快捷键不放，红框不会快速闪烁
-- [ ] 在 `chrome://extensions` 的 service worker/错误页面中没有新增报错
+- [ ] 在 `chrome://extensions` 的插件错误页面中没有新增报错
 - [ ] `chrome.storage.local` 里只有 `relay.latest`，值里只有 `id`、`site`、`ts`
 
 ## Git 步骤
 
 1. 确认 `main` 已包含第 1 步的代码，再从 `main` 创建分支 `muse/step-2`
 2. 提交信息用英文，一句话
-3. 推送后开 **Draft PR** 指向 `main`；**不合并，不标 Ready**。如果无法开 PR，只推送分支并说明原因
+3. 推送后开一个**普通 PR（不是 Draft）**指向 `main`；**不要合并**。如果无法开 PR，只推送分支并说明原因
 
 ## 报告格式
 

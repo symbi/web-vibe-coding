@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Relay Highlighter",
-  "version": "0.2.0",
+  "version": "0.3.2",
   "description": "Shows a red border on the page with the latest AI reply so you know where to copy from.",
   "permissions": ["storage"],
   "content_scripts": [

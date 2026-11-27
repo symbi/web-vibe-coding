@@ -22,9 +22,12 @@
   // --- Reply-detection tuning (Step 3a) ---
   // Initial guesses, to be adjusted from real use; keep them all here.
   const QUIET_MS = 1500; // No counted change for this long ends a burst.
-  const MIN_BURST_MS = 2000; // A burst must last at least this long.
-  const MIN_MUTATIONS = 30; // A burst needs at least this many counted records.
-  const MIN_ADDED_CHARS = 80; // A burst needs at least this much added text (estimated).
+  // Thresholds tuned from real [Relay] logs on chatgpt.com (2026-11-26):
+  // UI noise bursts lasted at most ~900 ms with at most ~30 added chars,
+  // while real replies lasted ~1.9 s or more, so the gates sit between.
+  const MIN_BURST_MS = 1500; // A burst must last at least this long.
+  const MIN_MUTATIONS = 10; // A burst needs at least this many counted records.
+  const MIN_ADDED_CHARS = 40; // A burst needs at least this much added text (estimated).
   const NAV_GRACE_MS = 3000; // Ignore changes this long after load / URL change.
   const USER_ACTIVITY_GRACE_MS = 1500; // After the user types in an editable area, ignore page changes this long.
 
@@ -221,6 +224,13 @@
       );
     };
 
+    // Local time as HH:MM:SS, for single-line debug logs.
+    const timeNow = () => {
+      const d = new Date();
+      const pad = (n) => String(n).padStart(2, "0");
+      return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    };
+
     // Structural signature of a record's target element: tag name, role,
     // data-testid, and up to 3 ancestor tag names, each part truncated to
     // 40 chars. Never includes text, class, id, or other content-bearing
@@ -260,15 +270,16 @@
         burstStart === null || lastMutationAt === null ? 0 : lastMutationAt - burstStart;
       const accepted =
         durationMs >= MIN_BURST_MS && mutations >= MIN_MUTATIONS && addedChars >= MIN_ADDED_CHARS;
-      // Debug line contains numbers, the verdict, and structural target
-      // signatures only, never page text.
-      console.debug("[Relay] burst ended", {
-        durationMs,
-        mutations,
-        addedChars,
-        accepted,
-        topTargets: topTargets(),
-      });
+      // Single-line debug string: numbers, local time, the verdict, and
+      // structural target signatures only, never page text. One line so
+      // it can be copied straight out of the console for tuning.
+      const top = topTargets()
+        .map(([signature, count]) => `${signature}:${count}`)
+        .join("|");
+      console.debug(
+        `[Relay] burst ended accepted=${accepted} durationMs=${Math.round(durationMs)} ` +
+          `mutations=${mutations} addedChars=${addedChars} at=${timeNow()} top=${top || "none"}`
+      );
       resetBurst();
       if (accepted) {
         writeLatest(); // Always a write (refreshes ts), never a toggle.
@@ -285,7 +296,9 @@
       // counters, suggestion panels around the input box) are not a reply.
       if (performance.now() - lastUserActivityAt < USER_ACTIVITY_GRACE_MS) {
         if (burstStart !== null) {
-          console.debug("[Relay] burst discarded (user typing)", { mutations, addedChars });
+          console.debug(
+            `[Relay] burst discarded (user typing) mutations=${mutations} addedChars=${addedChars} at=${timeNow()}`
+          );
           resetBurst();
         }
         return;
